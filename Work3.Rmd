@@ -1,0 +1,856 @@
+---
+title: "Análise de medidas da concentração do poluente <br> PM2,5 no ar do  Estado de São Paulo em 2023" 
+author: "***KEILA MARA CASSIANO***"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+output: html_document
+
+---
+![](https://est.uff.br/wp-content/uploads/sites/168/2020/05/LogoGET-Azul-fundotransp.png)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Bibliotecas, include=FALSE}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+install.packages("BlandAltmanLeh")
+install.packages("ggspatial")
+install.packages("htmlwidgets")
+install.packages("irr") 
+install.packages("leaflet") 
+install.packages("readxl")
+
+
+library(BlandAltmanLeh)
+library(cowplot)
+library(dplyr)
+library(geobr)
+library(ggplot2)
+library(ggspatial)
+library(haven)
+library(htmltools)
+library(htmlwidgets)
+library(irr)
+library(janitor)
+library(kableExtra)
+library(knitr)
+library(leaflet)
+library(lubridate)
+library(naniar)
+library(readxl)
+library(sf)
+library(tidyverse)
+```
+
+```{r DIRETORIO, include=FALSE}
+#selecionar o diretório onde estão a base de dados e onde serão salvos osarquivos html
+setwd("C:/Users/pedro/Desktop/Trabalho 4")
+```
+
+```{r BASES_DE_DADOS1, include=FALSE}
+#Lendo a base de dados 1 (SISAM)
+dadosA=read.csv("PM2.5_diario_2023.csv")
+names(dadosA)
+
+#Criando as colunas data, mês, ano, dia e dia da semana
+dadosA$Data=ymd(dadosA$Date)
+dadosA$mes=month(dadosA$Data)
+dadosA$ano=year(dadosA$Data)
+dadosA$wday=weekdays(dadosA$Data)
+dadosA
+
+#Comando para extrair só os dois primeiros dígitos de Cod
+dadosA$UF=substr(dadosA$Cod,1,2)
+
+#Compreendendo melhor os dados
+
+#distribuução de frequências de cada UF
+#note que tem 234780 dados de SP - cod 35
+table(dadosA$UF) 
+
+#distribuição de frequências de cada mês
+#observa-se que a quantidade  de observações não mesma para os meses
+#porque tem meses de 30,31 dias, fevereiro tem 28 dias, etc
+table(dadosA$mes)
+
+#Filtrando só os dados de São Paulo Cod 35, SP deve te 234780 linhas
+#cada linha é uma medida diária de cada municiipio, de cada dia do ano
+SP1Dia=subset(dadosA,dadosA$UF==35)
+
+#Calcula média de  PM2,5 de cada Cod de municipio,  por mês 
+#SP1mes tera 7740 linhas que sao 12 meses*645 municipios
+SP1Mes=SP1Dia%>%group_by(Cod,mes)%>%
+summarise(pm2.5=mean(PM2.5,na.rm=T))
+
+#Renomear codigo da base de dados manuais pra ficar com o mesmo nome da base do  SINAM
+names(SP1Mes)[names(SP1Mes) == "Cod"] <- "CD_MUN"
+
+#cada municipio tem 12 linhas na base SP1Mes por  isso que quando eu faço a distribuiça de 
+# frequencia abaixo por mes, aparecem  645 observacoes de cada mes pq SP tem 645 municipios
+table(SP1Mes$mes)
+
+#Calcula média Anual de  PM2,5 de cada Cod de municipio,cada municipio tinha 12 observacoes, 
+#entao vai calcular a média mensal de cada municipio, 645 linhas
+SP1Ano=SP1Mes%>%group_by(CD_MUN)%>%
+  summarise(pm2.5=mean(pm2.5,na.rm=T))
+
+#Calcula média de  PM2,5 de cada mês ,cada municipio tinha observações de 12 meses 
+#entao vai calcular a média de cada mês, considerando todos os municipios, 12 linhaS
+SP1UF=SP1Mes%>%group_by(mes)%>%
+  summarise(pm2.5=mean(pm2.5,na.rm=T))
+```
+
+```{r BASES_DE_DADOS2, include=FALSE}
+#Lendo a base de dados 2 (Donkelaar)
+dadosB=read_excel("dados_completos_consolidado_Donkelar.xlsx")
+
+#Filtrando só os casos de SP na base de dados 2
+# SP2Mes tera 7740 linhas que sao 12meses*645 municipios
+SP2Mes=subset(dadosB, dadosB$SIGLA_UF==35)
+
+#Renomear codigo da base de dados manuais pra ficar com o mesmo nome da base do  SINAM
+names(SP2Mes)[names(SP2Mes) == "Mes"] <- "mes"
+names(SP1Mes)[names(SP1Mes) == "Cod"] <- "CD_MUN"
+
+#Calcula média de  PM2,5 de cada Cod de municipio,cada municipio tinha 12 observacoes, 
+#entao vai calcular a média mensal de cada municipio, 645 linhas
+SP2Ano=SP2Mes%>%group_by(CD_MUN)%>%
+  summarise(Media_PM25=mean(Media_PM25,na.rm=T))
+
+#Calcula média de  PM2,5 de cada mês ,cada municipio tinha observações de 12 meses 
+#entao vai calcular a média de cada mês, considerando tods os municipios, 12 linhaS
+#SP2UF deve ter entao 12 linhas, uma média de cada mês
+SP2UF=SP2Mes%>%group_by(mes)%>%
+  summarise(Media_PM25=mean(Media_PM25,na.rm=T))
+```
+
+```{r BASES_DE_DADOS_JUNTAS, include=FALSE}
+#Juntado as bases numa só pelo campo CD_MUN e mês 
+#Base mes tem 7740 linhas
+baseMes <- merge(SP1Mes, SP2Mes, by = c("CD_MUN", "mes"))
+
+#baseAno tem 645 linhas, uma média anual de cada municipio
+baseAno <- merge(SP1Ano, SP2Ano, by = "CD_MUN")
+
+#baseUF tem 12 linhas, uma média de cada mês
+baseUF <- merge(SP1UF, SP2UF, by = "mes")
+```
+
+```{r Correl_e_ICC, include=FALSE}
+#Calculo do coeficiente de correlação linear de Pearson na base Mes
+rMes=cor.test(baseMes$pm2.5, baseMes$Media_PM25, use = "complete.obs", method = "pearson")
+rMes
+#Para acessar apenas o p-valor
+rMes$p.value
+#para acessar a correlação
+rMes$estimate
+
+#Calculo do coeficiente de correlação de ordem de Speraman na base Mes
+rhoMes=cor.test(baseMes$pm2.5, baseMes$Media_PM25, use = "complete.obs", method = "spearman")
+rhoMes
+#Para acessar apenas o p-valor
+rhoMes$p.value
+#para acessar a correlação
+rhoMes$estimate
+
+#Calculo do coeficiente de correlação de ordem de Speraman na base Ano
+rhoAno=cor.test(baseAno$pm2.5, baseAno$Media_PM25, use = "complete.obs", method = "spearman")
+rhoAno
+# Para acessar apenas o p-valor
+rhoAno$p.value
+#para acessar a correlação
+rhoAno$estimate
+
+#Calculo do coeficiente de correlação intraclasse(concordancia entre as duas medidas) na base Mes
+avaliacoes <- baseMes[, c("pm2.5", "Media_PM25")]
+iccMes=icc(avaliacoes, model = "twoway", type = "consistency", unit = "single")
+ValorICC_Mes=iccMes$value
+ValorICC_Mes
+IC95_ICC_Mes=c(round (iccMes$lbound,2), round(iccMes$ubound,2))
+IC95_ICC_Mes
+
+#Calculo do coeficiente de correlação linear de Pearson na base Ano
+rAno=cor.test(baseAno$pm2.5, baseAno$Media_PM25, use = "complete.obs", method = "pearson")
+rAno
+# Para acessar apenas o p-valor
+rAno$p.value
+#para acessar a correlação
+rAno$estimate
+
+#Calculo do coeficiente de correlação de ordem de Speraman na base Ano
+rhoAno=cor.test(baseAno$pm2.5, baseAno$Media_PM25, use = "complete.obs", method = "spearman")
+rhoAno
+# Para acessar apenas o p-valor
+rhoAno$p.value
+#para acessar a correlação
+rhoAno$estimate
+
+#Calculo do coeFiciente de correlação intraclasse(concordancia entre as duas medidas) na base Ano
+avaliacoes <- baseAno[, c("pm2.5", "Media_PM25")]
+iccAno=icc(avaliacoes, model = "twoway", type = "consistency", unit = "single")
+ValorICC_Ano=iccAno$value
+ValorICC_Ano
+IC95_ICC_Ano=c(round (iccAno$lbound,2), round(iccAno$ubound,2))
+IC95_ICC_Ano
+
+#Calculo do coeficiente de correlação linear de Pearson na base UF
+rUF <- cor.test(baseUF$pm2.5, baseUF$Media_PM25, use = "complete.obs", method = "pearson")
+rUF
+# Para acessar apenas o p-valor
+rUF$p.value
+#para acessar a correlação
+rUF$estimate
+
+#Calculo do coeficiente de correlação de ordem de Speraman na base Ano
+rhoUF=cor.test(baseUF$pm2.5, baseUF$Media_PM25, use = "complete.obs", method = "spearman")
+rhoUF
+# Para acessar apenas o p-valor
+rhoUF$p.value
+#para acessar a correlação
+rhoUF$estimate
+
+#Calculo do coeficiente de correlação intraclasse(concordancia entre as duas medidas) na base UF
+avaliacoes <- baseUF[, c("pm2.5", "Media_PM25")]
+iccUF=icc(avaliacoes, model = "twoway", type = "consistency", unit = "single")
+ValorICC_UF=iccUF$value
+ValorICC_UF
+IC95_ICC_UF=c(round (iccUF$lbound,2), round(iccUF$ubound,2))
+IC95_ICC_UF
+```
+<div style="text-align: justify"> 
+
+<br>
+
+### **1. Introdução**
+
+<br>
+A poluição atmosférica é uma séria ameaça à saúde pública, associada à doenças como AVC, 
+doenças cardíacas, câncer de pulmão, doenças respiratórias e à mortes 
+prematuras causadas por essas doenças. Neste contexto, grande atenção é dada ao poluente particulado 
+fino com diâmetro inferior a 2,5 μm (PM2,5), um material contido em atmosferas poluídas, associado
+à diferentes fontes de emissão e que penetra profundamente nos pulmões, sendo assim importante indicador de risco com
+grande impacto na saúde da populaçã exposta, sendo as populações vulneráveis (crianças, idosos, 
+gestantes e pessoas com doenças crônicas) as mais afetadas.
+
+<br>
+No Brasil, a poluição atmosférica afeta gravemente diversas regiões do país, exigindo 
+atenção e ações coordenadas em todo o território nacional. Estima-se que 
+no país, 51 mil mortes por ano estejam ligadas à poluição do ar (Quintanilha, 2021).
+Embora o estado de São Paulo não seja o único com altos níveis de poluição 
+atmosférica no Brasil, ele se destaca por concentrar várias das cidades historicamente mais 
+poluídas do país. Estudos recentes indicam que municípios paulistas como Osasco,
+Guarulhos, São Caetano, Rio Claro e Cubatão apresentam níveis de PM2,5
+significativamente muito acima dos limites recomendados 
+pela Organização Mundial da Saúde (OMS).  Além disso, em setembro de 2024, 
+a cidade de São Paulo liderou o ranking mundial 
+de pior qualidade do ar entre as metrópoles analisadas em tempo real 
+pela plataforma suíça IQAir, superando cidades como Lahore e Pequim,
+que até então eram tradicionalmente conhecidas como as mais poluídas do mundo. 
+
+<br>
+
+### **2. Objetivos**
+
+<br>
+Descrever o comportamento das concentrações de PM2,5 no Estado de São Paulo, no ano de 2023; comparar as medidas destas concentrações obtidas via satélite por duas fontes distintas (CAMS-SISAM e Donkelaar); analisar a significância das diferenças obtidas entre as duas medidas e analisar a concordância entre as duas medidas.  
+
+<br>
+
+### **3. Fontes de dados**
+
+<br>
+Fonte 1: CAMS-SISAM. Os dados primários desta fonte contém medidas diárias de PM2,5 em cada município de cada Unidade de Federação do país, no 
+ano de 2023, obtidas via satélite pelo CAMS (Copernicus Atmosphere Monitoring Service), disponibilizado na plataforma SISAM(Sistema de Informações integradas à Saúde Ambiental) e em https://atmosphere.copernicus.eu/charts/packages/cams/. 
+Nesta base, cada medida registrada refere-se à média diária de PM2,5 no respectivo local. 
+
+<br>
+O SISAM é um sistema do Ministério da 
+Saúde do Brasil, utilizado para coletar, armazenar e analisar dados relacionados 
+à saúde ambiental;monitorar riscos e exposições ambientais que afetam a saúde da
+população;apoiar políticas públicas de vigilância em saúde ambiental.
+A plataforma SISAM apresenta planilhas com dados meteorológicos e de qualidade 
+do ar estimadas por sensoriamento remoto para todos os estados e municípios brasileiros, 
+por data e hora. Jacobson *et al.* (2024) 
+relatam que o SISAM tem como fonte o Copernicus Atmosphere Monitoring Service (CAMS), 
+conjunto de dados de reanálise global da composição atmosférica produzido
+pelo European Centre for Medium-Range Weather Forecasts com o Integrated Forecasting 
+System atualizado. O CAMS combina informações de observações *in situ* e de 
+satélite com modelos computacionais da 
+atmosfera para gerar uma estimativa, a mais precisa possível, de gases e aerosóis 
+atmosféricos. A validação do CAMS é realizada periodicamente e coordenada pela 
+Royal Dutch Meteorological Organization. Innes *et al.* (2019) avaliaram 
+o desempenho das reanálises do CAMS comparando versões anteriores, e Wang *et al.* (2020) 
+validaram o CAMS usando medições de aeronaves em diferentes partes do mundo, 
+incluindo o Brasil.
+
+<br>
+Fonte 2: Donkelaar. Os dados primários desta fonte contém média, desvio padrão, mínimo e máximo mensais das medidas de PM2,5 em cada município de cada Unidade de Federação do país, no ano de 2023, obtidas via satélite e registradas pelo grupo de Pesquisa de Aaron van Donkelaar, um professor da Washington University in St. Louis, disponibilizados em https://sites.wustl.edu/acag/datasets/surface-pm2-5/#V6.GL.02.03.
+
+<br>
+
+### **4. Metodologia de Análise Estatística**
+
+<br>
+Para ambas as foontes de dados, que continham dados de todos as Unidades da Federação do país, 
+foram filtrados os dados do Estado de São Paulo, que possui Código Identificador de Unidade 
+da Federação igual a 35 e contém 645 municípios.  Uma vez que os dados primários da Fonte 1 (dados CAMS-SISAM) eram médias diárias e os dados  primários da Fonte 2 (Donkelaar) eram médias mensais, foram calculadas as médias mensais dos dados  CAMS-SISAM para que as bases pudessem ser comparadas a partir da mesma medida, ficando asssim disponibilizada para comparação em cada uma das bases, as 12 médias mensais de cada um dos 654 municipios. Foi construída assim uma base de dados com informação do mês, do município, das duas medias mensais pareadas, com n = 12x645 = 7740 observações (12 médias mensais de cada município). Foi construída também uma base com as médias anuais de cada um dos 645 municípios, com informação do município e das duas médias anuais pareadas, com n= 1x645 = 645 observações (1 média anual de cada município). E para comparação temporal de uma média global em cada mês do ano, foi construída uma terceira base de dados com informaçã do mês e da média global dos 645 municípios de cada mês, obtida a partir de cada uma das  duas fontes de dados, sendo assim uma base com informacao do mes, e das duas médias globais mensais, com n = 12x 1= 12 observações. 
+
+<br>
+A análise descritiva das três bases de dados foi realizada a partir de gráficos,  mapas descritivos,  e cálculo de estatísticas 
+descritivas. 
+
+<br>
+Para a análise da significância das diferenças observadas entre as duas medidas a serem comparadas, a 
+normalidade das duas distribuições foi investigada pelo teste de  Shapiro-Wilk. 
+A comparação pareada de duas medidas foi realizada por abordagem não paramétrica, através do Teste de Wilcoxon,  para bases de tamanho de amostra pequeno (menor que 30) ou quando a hipótese de normalidade não foi confirmada para as distribuições das medidas comparadas.  Para bases de tamanho muito grande (maiores que 5400), para os quais o teste de normalidade de Shapiro Wilk não é executado no R, foi considerada normalidade e a comparação pareada foi feita pelo teste paramétrico t-de Student pareaodo.  
+
+<br>
+A análise de correlação entre duas medidas foi feita sob as duas abordagens, paramétrica e não paramétrica, através da cálculo do Coeficiente de Correlação Linear de Pearson e do Coeficiente de Correlação de Ordem de Spearman. A significância dos Coeficientes de Correlação foi verificada pelo Teste t para o Coeficiente de Correlação. A correlação foi considerada forte apenas se seu valor absoluto fosse maior que 0,7 e moderada se seu valor absoluto fosse maior que 0,5 e menor ou igual a 0,7.
+
+<br>
+A Análise de Concordância entre as duas medidas se baseou no uso de três
+ferramentas: Estimativa pontual e estimativa intervalar do Coeficiente de
+Correlação Intraclasse (ICC, do inglês, Intraclass Correlation Coefficient) e análise do
+Gráfico de Altman-Bland.
+
+<br>
+O ICC expressa a proporção de variabilidade total que é devida à variabilidade 
+entre as unidades. Neste caso de estar avaliando a concordância entre duas medidas, 
+o ICC pode ser interpretado como uma medida de concordância que mede o grau de 
+afastamento das duas medidas à reta de 45 graus, onde teria concordância perfeita, 
+pois ambas medidas seriam iguais.A classificação da concordância a partir do ICC
+foi baseada na classificação de Weir (2005) dada por: 
+
+0,00 ≤ ICC ≤ 0,20 = concordância pobre, 
+
+0,20 < ICC ≤ 0,40 = concordância razoável,
+
+0,40 < ICC ≤ 0,60 = concordância boa,
+
+0,60 < ICC ≤ 0,80 = concordância muito boa,
+
+0,80 < ICC ≤ 1,00 = concordância excelente.
+
+<br>
+A significância do ICC foi analisada pelo intervalo de confiança do ICC ao nível de 95% de confiança. A concordância foi considerada significativamente boa se o mínimo valor do intervalo de confiança do ICC  ao nível de 95% de confiança fosse ao nível de “boa concordância”, ou seja, maior que 0,4 e menor ou igual a 0,6.  A concordância foi considerada significativamente muito boa se o mínimo valor do intervalo de confiança do ICC  ao nível de 95% de confiança fosse ao  nível de “muito boa concordância”, ou seja, maior que 0,6 e menor ou igual a 0,80.  A concordância foi considerada significativamente excelente  se o mínimo valor do intervalo de confiança do ICC  ao nível de 95% de confiança fosse ao  nível de “excelente concordância”, ou seja, maior que 0,8 e menor ou igual a 1,0.   Considerou-se neste trabalho validação da confiabilidade se a concordância entre elas fosse significativamente boa, ou significativamente muito boa, ou significativamente excelente. Ou seja, o valor mínimo do intervalo de confiança para o ICC  deve ser maior que 0,4 para que a concordância entre elas seja considerada significativa e seja validada a confiabilidade de uma medida em relação a outra. 
+
+<br>
+O Gráfico de Altman-Band é um diagrama de dispersão no plano cartesiano XY, onde no eixo Y representa-se a variação D entre as duas medidas comparadas e no eixo X a média entre estas duas medidas. Na análise do Gráfico de Altman-Band, a presença de correlação linear entre estas medidas X e Y é indicativo de   vieses ou problemas de calibração de um dos métodos de medida. Os limites de concordância marcados no gráfico de Altman-Bland são dados por: média da variação D mais ou menos 1,96 vezes o desvio padrão da variação D.
+
+<br>
+Todas as manipulações das bases de dados e análises estatísticas foram realizadas no programa R 4.4.0 e foi adotado nível de significância máximo de
+5% para análise dos resultados dos testes de hipóteses. 
+
+<br>
+
+### **5. Resultados**
+
+<br>
+
+#### **5.1. Análise da base de dados contendo 12 médias mensais de cada um dos 645 municípios**
+
+```{r Teste_t_Student_Pareado, include=FALSE}
+# Teste t de Student pareado
+testeMes <- t.test(baseMes$pm2.5, baseMes$Media_PM25, paired = TRUE)
+```
+
+
+<br>
+Nesta seção é realizada a comparação das 12 médias mensais de cada um dos 645 municípios estimadas pelas medidas do CAMS-SISAM e Donkelaar, logo esta base tem  n= 12x645=7740 médias de cada uma das fontes de dados. 
+A Figura 1 exibe os boxplots das distribuições das médias mensais das concentrações de PM2,5 estimadas por sensoriamento remoto pelo CAMS-SISAM e pelo Donkelaar.  Para ambas as fontes, os boxplots de todos os meses mostram alta variabilidade entre as médias dos 645 municípios, com presença de muitos pontos atípicos (munícípios com médias de PM2,5 outliers ou inliers, representadas por º nos boxplots). 
+
+<br>
+Somente no mês de Janeiro dos dados observados pelo Donkelaar, há registro de algum município com média mensal da concentração de PM2,5 inferior a 5 μg/m<sup>3</sup>, que é a concentração máxima recomendada pela OMS. 
+Segundo essa base, a média global mensal da concentração de PM2,5 no ar do Estado de São Paulo no ano de 2023 foi de 
+**`r round(mean(SP1Mes$pm2.5),2)`** μg/m<sup>3</sup>, a partir dos dados do CAMS-SISAM, e foi igual a 
+**`r round(mean(SP2Mes$Media_PM25),2)`** μg/m<sup>3</sup>, a partir dos dados de Donkelaar. 
+Logo, para ambos os métodos de medida,  CAMS-SISAM e Donkelaar, a média global mensal da concentração de PM2,5 no ar do Estado de São Paulo em 2023 era muito maior que a média máxima recomendada pela OMS, de 5 μg/m<sup>3</sup.
+
+<div style="text-align: center;">
+
+<br>
+**Figura 1: Boxplots das distribuições das médias mensais das concentrações de PM2,5, dados CAMS-SISAM e Donkelaar.São Paulo, 2023.**
+
+```{r GRAFICO1,  echo=FALSE, fig.width=14, fig.height=5}
+#boxplot por mes comparando as duas fontes SISAM e Donkelaar
+
+# Colando as duas variaveis numa coluna só :
+baseMes_long <- baseMes %>%
+  pivot_longer(
+    cols      = c(pm2.5, Media_PM25),
+    names_to  = "Fonte",
+    values_to = "Valor"
+  ) %>%
+  mutate(
+    mes = factor(
+      mes,
+      levels = 1:12,
+      labels = c( "Janeiro", "Fevereiro", "Março",   "Abril",
+                  "Maio",    "Junho",     "Julho",   "Agosto",
+                  "Setembro","Outubro",   "Novembro", "Dezembro")),
+    Fonte = factor(
+      Fonte,
+      levels = c("pm2.5", "Media_PM25"),
+      labels = c("SISAM", "Donkelaar")
+    )
+  )
+
+# Construindo o boxplot conjunto 
+ggplot(baseMes_long, aes(x = mes, y = Valor, fill = Fonte)) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +
+  scale_fill_manual(values = c(
+    "SISAM"    = "steelblue",
+    "Donkelaar" = "salmon"
+  )) +
+  labs(
+    x    = "Mês",
+    y    = expression("PM2.5 ("*mu*"g/m"^3*")"),
+    fill = "Fonte"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x   = element_text(face = "bold"),
+    axis.text.y   = element_text(face = "bold"),
+    axis.title.x  = element_text(face = "bold"),
+    axis.title.y  = element_text(face = "bold"),
+    legend.title  = element_text(face = "bold")
+  )
+```
+</div>
+  
+  
+```{r Correl_BLAND_ALTMAN1, include=FALSE}
+#Calculo do coeficiente de correlação linear de Pearson na base Mes
+rBA1=cor.test(baseMes$pm2.5+baseMes$Media_PM25, baseMes$pm2.5-baseMes$Media_PM25, use = "complete.obs", method = "pearson")
+#Para acessar apenas o p-valor
+rBA1$p.value
+#para acessar a correlação
+rBA1$estimate
+```
+<br>
+
+A Figura 2 mostra o Gráfico de dispersão conjunta das 7740 médias mensais de PM2,5 
+obtidas a partir dos dados das duas fontes e o gráfico de Altman Bland pode ser visto na Figura 3. 
+O Coeficiente de Correlação Linear de Pearson entre  as duas  medidas foi igual a **`r round(rMes$estimate,2)`**, com um **`r if (rMes$p.value < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(rMes$p.value, format = "f", digits = 3))) }`**, e o Coeficiente de Correlação 
+de Ordem de Spearman entreas duas  medidas foi igual a **`r round(rhoMes$estimate,2)`**, com  um **`r if (rhoMes$p.value < 0.001) { "p-valor < 0,001"} else { paste0("p-valor = ", sub("\\.", ",", formatC(rhoMes$p.value, format = "f", digits = 3))) }`**, evidenciando que não há forte correlação entre as duas medidas, embora as correlações sejam significativamente distintas de zero, já que apresentaram p-valores menores que 5% no teste t de significância do coeficiente. Devido ao grande tamanho da amostra, as 7740 médias foram comparadas pareadamente pelo teste t-de Student pareado, que resultou em um **`r if (testeMes$p.value < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(testeMes$p.value, format = "f", digits = 3))) }`**, mostrando que as diferenças entre as 7740 médias  mensais dos municipios  obtidas pelos dois métodos são significativas sob o ponto de vista estatístico. O ICC foi  igual a **`r round(ValorICC_Mes,2)`**, com IC95% (**`r IC95_ICC_Mes`**), evidenciando 
+concordância pobre entre as medidas das duas fontes de dados, nesta comparação das 7740 médias, corroborando o  resultado do teste de Wilcoxon e o comportamento da nuvem de pontos nos gráficos das Figuras 2 e 3. 
+ 
+Além da não significância do ICC,  outra característica que  enfraquece a evidência de concordância entre as médias obtidas por CAMS-SISAM e do Donkelaar nesta base de dados, é a presença de correlação entre a média e a diferença das duas medidas comparadas, como pode ser visualizada nítida tendencia linear crescente na formação da nuvem de pontos do gráfico de Altmam Bland exibido na Figura 3. O valor do coeficiente de correlação é igual **`r round(rBA1$estimate,2)`**, com um **`r if (rBA1$p.value < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(rBA1$p.value, format = "f", digits = 3))) }`**;  indicando  correlação forte e significativa,  com uma tendência de que quanto maior a média das duas medidas, maior a diferença. Isso sugere que há viés dependente da magnitude da medição, ou seja, as diferenças entre os métodos não são constantes ao longo do intervalo de valores medidos e os métodos se comportam de forma diferente dependendo da intensidade da variável; ou viés proporcional (um dos métodos superestima ou subestima mais à medida que o valor real aumenta); ou erro sistemático crescente (diferença entre os métodos cresce com a concentração), ou problema de calibragem (um dos métodos está mal calibrado em certas faixas). 
+
+<div style="text-align: center;">
+
+<br>
+**Figura 2: Gráfico de dispersão conjunta das 7740 médias mensais de PM2,5 obtidas pelo CAMS-SISAM e pelo Donkelaar, para os 645 municípios. São Paulo, 2023.**
+
+```{r GRAFICO2,  echo=FALSE, message=FALSE, warning=FALSE }
+#Gráfico de dispersão na baseMes
+
+ggplot(baseMes, aes(x = pm2.5, y = Media_PM25)) +
+  geom_point(color = "black", size = 1) +  # pontos de dispersão
+  geom_smooth(method = "lm",  se = FALSE, col = "blue") +  # reta de regressão linear se quiser o intervalo de CONnfiança coloca se= TRUE
+  scale_x_continuous(breaks = seq(0, max(baseMes$pm2.5, na.rm = TRUE), by = 5)) +   # eixo X de 5 em 5
+  scale_y_continuous(breaks = seq(0, max(baseMes$Media_PM25, na.rm = TRUE), by = 5))+  # eixo Y de 5 em 5
+  labs(
+    x = expression("PM2.5 ("*mu*"g/m"^3*") - CAMS-SISAM") ,
+    y = expression("PM2.5 ("*mu*"g/m"^3*") - Donkelaar")
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x   = element_text(face = "bold"),
+    axis.text.y   = element_text(face = "bold")
+  )
+```
+
+<br>
+**Figura 3: Gráfico de Altman Bland avaliando a concordância das 7740 médias mensais de PM2,5 obtidas pelo CAMS-SISAM e pelo Donkelaar, para os 645 municípios . São Paulo, 2023.**
+
+```{r GRAFICO3,  echo=FALSE, message=FALSE, warning=FALSE } 
+invisible(
+  #Gráfico de AltmanBland Base Mes- 7740 observações 12 de cada um dos 645 municípios
+bland.altman.plot(baseMes$pm2.5, baseMes$Media_PM25,
+                  graph.sys = "base",
+                  xlab = "Média das duas medidas", 
+                  ylab = "Diferença das duas medidas")
+)
+```
+</div>
+<br>
+
+#### **5.2. Análise da Base de dados contendo 645 médias anuais, uma média de cada um dos 645 municípios**
+
+
+```{r ShapiroTest, include=FALSE}
+shapiro1 <- shapiro.test(baseAno$pm2.5)$p.value
+shapiro2 <- shapiro.test(baseAno$Media_PM25)$p.value 
+```
+
+```{r Teste_Wilcoxon2, include=FALSE}
+# Teste de Wilcoxon pareado
+testeAno <- wilcox.test(baseAno$pm2.5, baseAno$Media_PM25, paired = TRUE)
+```
+
+```{r Correl_BLAND_ALTMAN2, include=FALSE}
+#Calculo do coeficiente de correlação linear de Pearson na base Mes
+rBA2=cor.test(baseAno$pm2.5+baseAno$Media_PM25, baseAno$pm2.5-baseAno$Media_PM25, use = "complete.obs", method = "pearson")
+#Para acessar apenas o p-valor
+rBA2$p.value
+#para acessar a correlação
+rBA2$estimate
+```
+
+<br>
+
+Nesta seção é realizada a comparação das médias anuais de cada um dos 645 municípios estimadas pelas medidas do CAMS-SISAM e do Donkelaar, logo esta base tem= 1x645=645 médias de cada uma das fontes de dados.
+A Figura 4 mostra o Gráfico de dispersão conjunta das 645 médias anuais de PM2,5 
+obtidas pelos dois métodos para os 645 municípios e o  gráfico de Altman Bland pode ser visto na Figura 5. 
+
+O Coeficiente de Correlação Linear de Pearson entre as duas  medidas foi igual a **`r round(rAno$estimate,2)`**,  com um **`r if (rAno$p.value < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(rAno$p.value, format = "f", digits = 3))) }`**, e o Coeficiente de Correlação 
+de Ordem de Spearman entre as duas  medidas foi igual a **`r round(rhoAno$estimate,2)`**, com um **`r if (rhoAno$p.value < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(rhoAno$p.value, format = "f", digits = 3))) }`**, evidenciando que não há forte correlação entre as duas medidas, embora as correlações sejam significativamente distintas de zero,  pois apresentaram p-valores menores que 5% no teste t de significância do coeficiente.
+
+O teste de Shapiro-Wilk, avaliando a normalidade da distribuição, resultou em um **`r if (shapiro1 < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(shapiro1, format = "f", digits = 3))) }`** para a distribuição  das 645 médias anuais obtidas pelo CAM-SISAM e em um **`r if (shapiro2 < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(shapiro2, format = "f", digits = 3))) }`**  para a distribuição das 645 médias anuais obtidas pelo Donkelaar. Uma vez que não foi verificada a normalidade das duas distribuições, as 645 médias foram comparadas pareadamente pelo teste de Wilcoxon que resultou num **`r if (testeAno$p.value < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(testeAno$p.value, format = "f", digits = 3))) }`**, mostrando que as diferenças entre as 645 médias anuais dos municípios obtidas pelos dois métodos são significaivas sob o ponto de vista estatístico. O ICC foi  gual a **`r round(ValorICC_Ano,2)`**, com IC95% (**`r IC95_ICC_Ano`**), evidenciando  concordância pobre entre as medidas das duas fontes de dados nesta comparação das 645 médias, corroborando o  resultado do teste de Wilcoxon e o comportamento da nuvem de pontos nos gráficos das Figuras 5 e 6. 
+
+Além da não significância do ICC,  outra característica que  enfraquece a evidência de concordância entre as médias obtidas por CAMS-SISAM e do Donkelaar nesta base de dados, é a presença de correlação entre a média e a diferença das duas medidas comparadas, como pode ser visualizada nítida tendencia linear crescente na formação da nuvem de pontos do gráfico de Altmam Bland exibido na Figura 5. O valor do coeficiente de correlação é igual **`r round(rBA2$estimate,2)`**, com um **`r if (rBA2$p.value < 0.001) { "p-valor < 0,001" } else { paste0("p-valor = ", sub("\\.", ",", formatC(rBA2$p.value, format = "f", digits = 3))) }`**;  indicando  correlação forte e significativa,  com uma tendência de que quanto maior a média das duas medidas, maior a diferença. Isso sugere que há viés dependente da magnitude da medição, ou seja, as diferenças entre os métodos não são constantes ao longo do intervalo de valores medidos e os métodos se comportam de forma diferente dependendo da intensidade da variável; ou viés proporcional (um dos métodos superestima ou subestima mais à medida que o valor real aumenta); ou erro sistemático crescente (diferença entre os métodos cresce com a concentração), ou problema de calibragem (um dos métodos está mal calibrado em certas faixas). 
+
+
+
+
+
+<div style="text-align: center;">
+
+<br>
+**Figura 4: Gráfico de dispersão conjunta das 645 médias anuais de PM2,5 obtidas pelo CAMS-SISAM e pelo Donkelaar, para os 645 municípios. São Paulo, 2023.**
+  
+```{r GRAFICO4,  echo=FALSE, message=FALSE, warning=FALSE }
+#Gráfico de dispersão na baseAno
+ggplot(baseAno, aes(x = pm2.5, y = Media_PM25)) +
+  geom_point(color = "black", size = 2) +  # pontos de dispersão
+  geom_smooth(method = "lm", se = FALSE, col = "blue") +  # reta de regressão linear se quiser o intervalo de CONnfiança coloca se= TRUE
+  scale_x_continuous(breaks = seq(0, max(baseAno$pm2.5, na.rm = TRUE), by = 5)) +   # eixo X de 5 em 5
+  scale_y_continuous(breaks = seq(0, max(baseAno$Media_PM25, na.rm = TRUE), by = 5))+  # eixo Y de 5 em 5
+  labs(
+    x = expression("PM2.5 ("*mu*"g/m"^3*") - CAMS-SISAM") ,
+    y = expression("PM2.5 ("*mu*"g/m"^3*") - Donkelaar")
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x   = element_text(face = "bold"),
+    axis.text.y   = element_text(face = "bold")
+  )
+
+```
+
+<br>
+**Figura 5: Gráfico de Altman Bland avaliando a concordância das 645 médias anuais de PM2,5 obtidas pelo CAMS-SISAM e pelo Donkelaar, para os 645 municípios . São Paulo, 2023.**
+  
+```{r GRAFICO_5,  echo=FALSE, message=FALSE, warning=FALSE} 
+invisible(
+  #Gráfico de AltmanBland Base Ano - 645 observações- uma de cada municipio
+bland.altman.plot(baseAno$pm2.5, baseAno$Media_PM25,
+                  graph.sys = "base",  # usa o sistema gráfico base
+                  xlab = "Média das duas medidas", 
+                  ylab = "Diferença das duas medidas")
+)
+```
+</div> 
+
+```{r BASES_MAPAS, include=FALSE}
+# baixar o shape do  estado  em https://www.ibge.gov.br/geociencias/organizacao-do-territorio/malhas-territoriais/15774-malhas.html
+
+shapeSP = read_sf("SP_Municipios_2024.shp")
+#Colocando crs=4326 pra ser compativel com a ferramenta lealeft usada no grafico
+shapeSP <- sf::st_transform(shapeSP, crs = 4326)
+names(shapeSP)
+names(baseAno)
+
+# Garantir que ambas as colunas estão em formato caractere
+shapeSP <- shapeSP %>% mutate(CD_MUN = as.character(CD_MUN))
+baseAno <- baseAno %>% mutate(CD_MUN = as.character(CD_MUN))
+
+# Fazer o join dados com  o shape
+mapa_dados <- shapeSP %>%
+  left_join(baseAno, by = "CD_MUN")
+
+#Remover NAs 
+mapa_dados <- mapa_dados %>% filter(!is.na(`pm2.5`))
+
+# Verificar quantas linhas sobraram após filtro removendo NAS 
+nrow(mapa_dados) 
+```
+<br>
+A Figura 6 exibe o mapa coroplético estático das médias anuais das medidas de concentração de PM2.5 para cada município do estado de São Paulo, 
+calculadas a partir dos dados do CAMS-SISAM. A distribuição da intensidade das cores que é associada ao valor da média de concentração de PM2.5, deixam evidente o quanto é maior a concentração do poluente na capital São Paulo e nos  municípios do entorno da capital. 
+<div style="text-align: center;">
+
+
+<br>
+**Figura 6: Mapa coroplético estático das médias anuais das medidas de concentração de PM2.5 para cada município do estado de São Paulo, obtidas pelo CAMS-SISAM**
+
+```{r GRAFICO6,  echo=FALSE } 
+#Mapa Estático para os dados CAMS-SISAM
+
+ggplot(mapa_dados) +
+  geom_sf(aes(fill = `pm2.5`)) +
+  scale_fill_gradient(
+    low = "#ffe6f0", high = "red",
+    limits = c(5, 40),             # fixa os limites da escala de cores uma vez que os dados de SP variaram nessa faixa 
+    breaks = seq(5, 40, by = 5),  # <- define os intervalos da legenda
+    oob = scales::squish,          # valores fora dos limites são "espremidos" nos extremos
+    name = expression("PM2.5 ("*mu*"g/m"^3*")")  # rótulo da legenda
+  ) +
+  theme_minimal() +
+  labs(title = "Concentração Média de PM2.5 nos Municípios de São Paulo, segundo SISAM")
+mapa_dados <- shapeSP %>%
+  mutate(CD_MUN = as.character(CD_MUN)) %>%
+  left_join(baseAno %>% mutate(CD_MUN = as.character(CD_MUN)),
+            by = "CD_MUN")
+```
+</div> 
+
+A Figura 7 exibe o mapa coroplético estático das médias anuais das medidas de concentração de PM2.5 para cada município do estado de São Paulo, 
+calculadas a partir dos dados do Donkelaar. A distribuição da intensidade das cores, que é associada ao valor da média de concentração de PM2.5,
+mostram que, segundo as medidas de Donkelaar, as médias não variam tanto entre os municípios do Estado de São Paulo, e nos municipios que apresentavam  as cores mais intensas na Figura 9, as cores são mais fracas segundo as medidas de Donkelaar, indicando menores médias do que as médias obtidas pelo CAMS-SISAM.  
+
+<div style="text-align: center;">
+
+<br>
+**Figura 7: Mapa coroplético estático das médias anuais das medidas de concentração de PM2.5 para cada município do estado de São Paulo, obtidas pelo Donkelaar**
+
+```{r GRAFICO7,  echo=FALSE } 
+#Mapa Estático para os dados Donkelaar
+
+ggplot(mapa_dados) +
+  geom_sf(aes(fill = `Media_PM25`)) +
+  scale_fill_gradient(
+    low = "#ffe6f0", high = "red",
+    limits = c(5, 40),             # fixa os limites da escala de cores uma vez que os dados de SP variaram nessa faixa 
+    breaks = seq(5, 40, by = 5),  # <- define os intervalos da legenda
+    oob = scales::squish,          # valores fora dos limites são "espremidos" nos extremos
+    name = expression("PM2.5 ("*mu*"g/m"^3*")")  # rótulo da legenda
+  ) +
+  theme_minimal() +
+  labs(title = "Concentração Média de PM2.5 nos Municípios de São Paulo, segundo Donkelaar")
+mapa_dados <- shapeSP %>%
+  mutate(CD_MUN = as.character(CD_MUN)) %>%
+  left_join(baseAno %>% mutate(CD_MUN = as.character(CD_MUN)),
+            by = "CD_MUN")
+```
+</div> 
+<br>
+
+A Figura 8 exibe um mapa interativo  das médias anuais das medidas de concentração de PM2.5 para cada município do estado de São Paulo. Ao posicionar o cursor sobre a area de um município do Estado de São Paulo, uma  pop-up é ativada com informações do nome do município e as duas médias anuais de concentração de PM2.5  calculadas a partir dos dados do CAMS-SISAM e do Donkelaar para este município.  A distribuição da intensidade das cores neste mapa interativo usou como referência as médias do CAMS-SISAM. 
+<br>
+
+``` {r GrafInterativo,  echo=FALSE} 
+#Gráfico interativo com pop-ups informando nome do município e as duas médiad de PM2.5
+
+# Criar coluna de pop-up com as 3 informações que serão fornecidas:
+# Nome do muniípio, média SISAM e média Donkelaar 
+mapa_dados$popup_info <- paste0(
+  "<strong>Município: </strong>", mapa_dados$NM_MUN, "<br>",
+  "<strong>Média PM2.5 SISAM: </strong>", round(mapa_dados$`pm2.5`, 2), " µg/m³<br>",
+  "<strong>Média PM2.5 Donkelaar: </strong>", round(mapa_dados$Media_PM25, 2), " µg/m³"
+)
+
+# Paleta de cores para o mapa (baseada nos valores do SISAM pm2.5)
+pal <- colorBin(
+  palette = "Reds",
+  domain = mapa_dados$`pm2.5`,
+  bins = seq(0, 40, by = 5),
+  na.color = "transparent",
+)
+
+# Criar o mapa interativo
+mapa_interativo <- leaflet(mapa_dados) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(`pm2.5`),
+    weight = 1,
+    color = "gray",
+    fillOpacity = 0.7,
+    highlightOptions = highlightOptions(weight = 2, color = "black", bringToFront = TRUE),
+    label = ~lapply(popup_info, HTML),
+    popup = ~popup_info
+  ) %>%
+  addLegend(
+    pal = pal,
+    values = ~`pm2.5`,
+    title = "Média PM2.5 (µg/m³) SISAM",
+    position = "bottomright",
+    labFormat = labelFormat(suffix = " µg/m³", between = " – ", digits = 1),
+    opacity = 0.7
+  )
+
+mapa_interativo
+
+```
+
+<br>
+
+#### **5.3. Análise da base de dados contendo 12 médias mensais globais do Estado, uma média de cada mês de 2023**
+
+
+```{r Teste_Wilcoxon, include=FALSE}
+
+# Teste de Wilcoxon pareado
+testeUF <- wilcox.test(baseUF$pm2.5, baseUF$Media_PM25, paired = TRUE)
+```
+
+<br>
+
+Nesta seção é realizada a comparação das 12 médias mensais globais do estado de São Paulo todo, estimadas pelas medidas do CAMS-SISAM e Donkelaar, logo esta base tem somente  n= 12 médias de cada uma das fontes de dados.
+A Figura  8  mostra a comparação da evolução das médias globais mensais das concentrações de PM2,5 obtidas pelo CAMS-SISAM e pelo Donkelaar no Estado de São Paulo em 2023. As duas séries de médias exibiram padrões de tendência, de crescimento e decrescimento, semelhantes ao longo do tempo.
+As médias mensais obtidas pelas medidas do Donkelaar foram maiores que as médias mensais obtidas pelas medidas do CAMS-SISAM nos meses de de janeiro a março, e nos meses de outubro a dezembro de 2023; as médias mensais obtidas pelas medidas do Donkelaar foram menores qque as médias mensais obtidas pelas medidas do CAMS-SISAM  nos meses de maio a agosto, e praticamente as médias obtidas pelos dois satélites coincidiram nos meses de abril e setembro de 2023. 
+
+<br>
+
+A média das 12 médias mensais obtidas pelas medidas do CAMS-SISAM  foi igual a  **`r round(mean(baseUF$pm2.5),2)`** μg/m<sup>3</sup> e a média das 12 médias mensais obtidas pelas medidas dde Donkelaar  foi igual a **`r round(mean(baseUF$Media_PM25),2)`** μg/m<sup>3</sup>. Assim, a média global da diferença entre 12 as médias mensais obtidas pelos dois métodos foi de
+ **`r round(mean(baseUF$Media_PM25),2)- round(mean(baseUF$pm2.5),2)`** μg/m<sup>3</sup>. As 12 médias mensais foram comparadas
+pareadamente por abordagem não paramétrica pelo Teste de Wilcoxon, devido ao pequeno tamanho amostral (n=12), e o p-valor resultante foi igual a 
+**`r round(testeUF$p.value,4)`**. Infere-se de tal resultado que 
+a diferença observada entre as médias globais mensais obtidas pelos dois métodos não representa uma diferença 
+significativa sob o ponto de vista estatístico.  
+<br>
+  
+<div style="text-align: center;">
+**Figura 8: Evolução das médias mensais de PM2,5 obtidas pelo CAMS-SISAM e pelo Donkelaar. São Paulo, 2023.**
+  
+```{r GRAFICO_8,  echo=FALSE, warning=FALSE, fig.width=14, fig.height=5}
+#Grafico de linha no ggplot
+
+
+# Transformação para formato longo + ajustes nos fatores
+baseUF_long <- baseUF %>%
+  pivot_longer(
+    cols = c(pm2.5, Media_PM25),
+    names_to = "Fonte",
+    values_to = "Valor"
+  ) %>%
+  mutate(
+    Fonte = recode(Fonte,
+                   "pm2.5" = "SISAM",
+                   "Media_PM25" = "Donkelaar"),
+    Fonte = factor(Fonte, levels = c("SISAM", "Donkelaar")),
+    mes = factor(mes,
+                 levels = 1:12,
+                 labels = c("Janeiro", "Fevereiro", "Março", "Abril",
+                            "Maio", "Junho", "Julho", "Agosto",
+                            "Setembro", "Outubro", "Novembro", "Dezembro"))
+  )
+
+# Criar o gráfico base
+ggplot(baseUF_long, aes(x = mes, y = Valor, color = Fonte, group = Fonte)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("SISAM" = "blue", "Donkelaar" = "red")) +
+  labs(
+    x = "Mês",
+    y = expression("Média de PM2.5 ("*mu*"g/m"^3*")"),
+    color = "Fonte"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = c(0.25, 0.85),
+    legend.background = element_rect(fill = alpha("white", 0.7), color = "gray"),
+    axis.title.x  = element_text(face = "bold"),
+    axis.title.y  = element_text(face = "bold"),
+    axis.text.x   = element_text(face = "bold"),
+    axis.text.y   = element_text(face = "bold"),
+    legend.title  = element_text(face = "bold")
+  )
+
+```
+</div>
+
+
+```{r Correl_BLAND_ALTMAN3, include=FALSE}
+#Calculo do coeficiente de correlação linear de Pearson na base Mes
+rBA3=cor.test(baseUF$pm2.5+baseUF$Media_PM25, baseUF$pm2.5-baseUF$Media_PM25, use = "complete.obs", method = "pearson")
+#Para acessar apenas o p-valor
+rBA3$p.value
+#para acessar a correlação
+rBA3$estimate
+```
+
+  
+A Figura 9 mostra o Gráfico de dispersão conjunta das 12 médias globais mensais de PM2,5 no Estado de São Paulo
+obtidas pelos dois métodos, 
+o gráfico de Altman Bland pode ser visto na Figura 10. O Coeficiente de Correlação Linear de Pearson entre 
+as duas  medidas foi igual a **`r round(rUF$estimate,2)`**, com p-valor igual a **`r round(rUF$p.value,3)`**, e o O Coeficiente de Correlação 
+de Ordem de Spearman entreas duas  medidas foi igual a **`r round(rhoUF$estimate,2)`**, com p-valor igual a **`r round(rhoUF$p.value,3)`**, evidenciando que há  moderada e significativa correlação linear entre as duas medidas e há  forte e significativa correlação de ordem entre as duas medidas.  A forte correlação de ordem infere sobre boa correlação e concordância do sentido/tendência de crescimento/decrescimento das duas séries. O ICC foi  igual a **`r round(ValorICC_UF,2)`**, com IC95% (**`r IC95_ICC_UF`**), evidenciando
+concordância muito boa entre as 12 médias obtidas das medidas das duas fontes de dados, corroborando o comportamento da nuvem de pontos nos gráficos das Figuras 7 e 8.  Entretanto, vale salientar que a concordância não  é significativamente muito boa, nem sequer significativamente boa, uma vez que o limite inferior do IC95% para o ICC é menor que 0,20. O intervalo de confiança amplo do ICC, possivelmente é devido ao pequeno tamanho da amostra usada nesta comparação, somente 12 observações, que infla a medida do erro padrão da estatística ICC. 
+<br>
+
+Não há coorrelação forte e significativa entre a média e a diferença das duas medidas comparadas, o coeficiente de correlação linear de Pearson para a disposição ds pontos do vrgáfico de Altman Bland da Figura 10 é igual a  **`r round(rBA3$estimate,2)`**, com p-valor igual a **`r round(rBA3$p.value,3)`**. Infere-se que não  há viés dependente da magnitude da medição, ou viés proporcional (um dos métodos superestima ou subestima mais à medida que o valor real aumenta); ou erro sistemático crescente (diferença entre os métodos cresce com a concentração), ou problema de calibragem (um dos método está mal calibrado em certas faixas) apontando a favoor da evidência de concordancia entre as duas fontes de dados nessa base das médias mensais globais
+
+<div style="text-align: center;">
+
+**Figura 9: Gráfico de dispersão conjunta das 12 médias mensais globais de PM2,5 obtidas ppelo CAMS-SISAM e pelo Donkelaar, para o Estado de São Paulo . São Paulo, 2023.**
+
+```{r GRAFICO9,  echo=FALSE, message=FALSE, warning=FALSE }
+
+#Gráfico de dispersão na baseUF
+ggplot(baseUF, aes(x = pm2.5, y = Media_PM25)) +
+  geom_point(color = "black", size = 4) +  # pontos de dispersão
+  geom_smooth(method = "lm", se = FALSE, col = "blue") +  # reta de regressão linear se quiser o intervalo de CONnfiança coloca se= TRUE
+  scale_x_continuous(breaks = seq(0, max(baseUF$pm2.5, na.rm = TRUE), by = 5)) +   # eixo X de 5 em 5
+  scale_y_continuous(breaks = seq(0, max(baseUF$Media_PM25, na.rm = TRUE), by = 5))+  # eixo Y de 5 em 5
+  labs(
+    x = expression("PM2.5 ("*mu*"g/m"^3*") - CAMS-SISAM"),
+    y = expression("PM2.5 ("*mu*"g/m"^3*") - Donkelaar")
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x   = element_text(face = "bold"),
+    axis.text.y   = element_text(face = "bold")
+  )
+```
+
+**Figura 10: Gráfico de Altman Bland avaliando a concordância das 12 médias mensais globais de PM2,5 pelo CAMS-SISAM e pelo Donkelaar para o Estado de São Paulo . São Paulo, 2023.**
+  
+```{r GRAFICO10,  echo=FALSE, message=FALSE, warning=FALSE } 
+invisible(
+#Gráfico de AltmanBland Base UF 12 observacoes (1 de cada mes)
+bland.altman.plot(baseUF$pm2.5, baseUF$Media_PM25,
+                  graph.sys = "base",  # usa o sistema gráfico base
+                  xlab = "Média das duas medidas", 
+                  ylab = "Diferença das duas medidas")
+)
+```
+
+</div>
+<br>
+
+## **6. Conclusão**
+
+Ambas as fontes de dados acusam quão grave estava a poluição do ar no Estado de São Paulo no ano de 2023, com médias mensais globais, e médias anuais de cada município muito acima do nível máximo preconizado pela OMS.  Entretanto a concordância entre as médias obtidas a partir das dua fontes de dados, e a não significância das diferenças entre as médias obtidas a partir das dua fontes de dados só foi atestada na comparação das 12 médias mensais globais. Para um estudo futuro, recomenda-se comparar ambas as medidas obtidas com as medidas de monitores fixos. 
+
+<br>
+  
+## **7. Referências Bibliográficas**
+  
+Inness A, Ades M, Agustí-Panareda A, Barré J, Benedictow A,
+Blechschmidt AM, et al. The CAMS reanalysis of atmospheric
+composition. Atmos Chem Phys 2019; 19(6): 3515-56. https://
+doi.org/10.5194/acp-19-3515-2019
+
+Jacobson LSV, Hacon SS, Schumacher V, Santos CPC, Vianna NA. 
+Desempenho dos dados de material particulado fino sobre a
+qualidade do ar em estudo epidemiológico em Salvador, Brasil. 
+Rev Bras Epidemiol. 2024; 27: e240068. https://doi.org/10.1590/1980-549720240068.2
+
+
+Quintanilha WFL, Maia ML, Bertoncini BV, Ribeio JP, Cassiano
+DR, Sousa FW, et al. Evaluation of atmospheric NO2 levels
+in public transport corridors. Transportes 2021; 29(4): 1-16.
+
+Wang Y, Ma YF, Eskes H, Inness A, Flemming J, Brasseur
+GP. Evaluation of the CAMS global atmospheric trace gas
+reanalysis 2003–2016 using aircraft campaign observations.
+Atmos Chem Phys 2020; 20(7): 4493-521. https://doi.
+org/10.5194/acp-20-4493-2020
+
+WEIR, J.P. (2005) Quantifying test-retest reliability using the intraclass 
+correlation coefficient and the SEM. J StrengthCond Res. 19(1):231-40.
+
+

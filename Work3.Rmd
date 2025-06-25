@@ -45,8 +45,9 @@ library(tidyverse)
 
 ```{r DIRETORIO, include=FALSE}
 #selecionar o diretório onde estão a base de dados e onde serão salvos osarquivos html
-setwd("C:/Users/pedro/Desktop/Trabalho 4")
+setwd("COLOQUE AQUI O CAMINHO DO SEU DIRETÓRIO ONDE FORAM SALVAS AS BASES DE DADOS")
 ```
+
 
 ```{r BASES_DE_DADOS1, include=FALSE}
 #Lendo a base de dados 1 (SISAM)
